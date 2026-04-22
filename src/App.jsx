@@ -87,8 +87,15 @@ export default function DutyManagerApp() {
   const isAdmin = session?.role === "admin";
 
   const fetchData = useCallback(async () => {
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data: p } = await supabase.from('profiles').select('*').gt('created_at', yesterday).order('id', { ascending: false });
+    // FIX: Removed strict timezone filter, limiting to last 20 entries instead
+    const { data: p, error: pError } = await supabase
+      .from('profiles')
+      .select('*')
+      .order('id', { ascending: false })
+      .limit(20);
+
+    if (pError) console.error("Profile Fetch Error:", pError.message);
+
     const { data: n } = await supabase.from('notes').select('*').order('id', { ascending: false });
     const { data: cd } = await supabase.from('secure_codes').select('*').order('label');
     const { data: cl } = await supabase.from('checklists').select('*');
@@ -123,13 +130,28 @@ export default function DutyManagerApp() {
 
   const handleSignIn = async () => {
     if (!siName.trim()) return;
-    await supabase.from('profiles').insert([{ name: siName, role: siRole || "Staff", sign_in: fmtTime() }]);
-    setSiName(""); setSiRole(""); fetchData();
+    const { error } = await supabase.from('profiles').insert([{ name: siName, role: siRole || "Staff", sign_in: fmtTime() }]);
+    if (error) {
+        alert("Sign In Error: " + error.message);
+    } else {
+        setSiName(""); setSiRole(""); 
+        setTimeout(fetchData, 500);
+    }
+  };
+
+  const handleSignOut = async (id) => {
+    const { error } = await supabase.from('profiles').update({ sign_out: fmtTime() }).eq('id', id);
+    if (error) {
+        alert("Sign Out Error: " + error.message);
+    } else {
+        setTimeout(fetchData, 500);
+    }
   };
 
   const deleteItem = async (table, id) => {
     if (confirm("Delete this item?")) {
-      await supabase.from(table).delete().eq('id', id);
+      const { error } = await supabase.from(table).delete().eq('id', id);
+      if (error) alert("Delete error: " + error.message);
       fetchData();
     }
   };
@@ -167,7 +189,7 @@ export default function DutyManagerApp() {
                    <button onClick={()=>setShowReports(true)} className="btn" style={{background:'#eee', padding:'6px 12px'}}><I.Download/> Exports</button>
                 </div>
                 <div className="ov-grid">
-                  <div className="ov-tile"><div className="ov-label">24h Sign-ins</div><div className="ov-val">{signInHistory.length}</div></div>
+                  <div className="ov-tile"><div className="ov-label">24h Entries</div><div className="ov-val">{signInHistory.length}</div></div>
                   <div className="ov-tile"><div className="ov-label">Notes</div><div className="ov-val">{noteHistory.length}</div></div>
                 </div>
               </div>
@@ -188,7 +210,7 @@ export default function DutyManagerApp() {
                     <div style={{fontWeight:'bold'}}>{s.name} <small style={{color:'var(--muted)'}}>{s.role}</small></div>
                     <div style={{fontSize:'12px', color:'var(--muted)'}}>In: {s.sign_in} {s.sign_out && `| Out: ${s.sign_out}`}</div>
                   </div>
-                  {!s.sign_out && <button onClick={async()=>{await supabase.from('profiles').update({sign_out:fmtTime()}).eq('id',s.id); fetchData();}} className="btn"><I.LogOut/></button>}
+                  {!s.sign_out && <button onClick={() => handleSignOut(s.id)} className="btn"><I.LogOut/></button>}
                   {isAdmin && <button onClick={()=>deleteItem('profiles', s.id)} style={{color:'red', border:'none', background:'none', marginLeft:'10px'}}><I.Trash/></button>}
                 </div>
               ))}
