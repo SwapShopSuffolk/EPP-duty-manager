@@ -3,7 +3,9 @@ import { useState, useEffect, useCallback } from "react";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-const supabase = createClient(supabaseUrl, supabaseAnonKey)
+const supabase = supabaseUrl && supabaseAnonKey
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null
 
 // ─────────────────────────────────────────────
 //  CONFIG & HELPERS
@@ -94,8 +96,10 @@ export default function DutyManagerApp() {
   const [editContact, setEditContact] = useState({ id: null, name: '', phone: '' });
 
   const isAdmin = session?.role === "admin";
+  const missingSupabaseConfig = !supabaseUrl || !supabaseAnonKey;
 
   const fetchData = useCallback(async () => {
+    if (!supabase) return;
     // Fetch today's attendance records
     const today = getToday();
 
@@ -238,12 +242,28 @@ export default function DutyManagerApp() {
   };
 
   const deleteItem = async (table, id) => {
+    if (!supabase) return;
     if (confirm("Delete this item?")) {
       const { error } = await supabase.from(table).delete().eq('id', id);
       if (error) alert("Delete error: " + error.message);
       fetchData();
     }
   };
+
+  if (missingSupabaseConfig) {
+    return (
+      <div style={{padding:'24px',fontFamily:'DM Sans,sans-serif',background:'#f4f4f2',minHeight:'100vh'}}>
+        <h1 style={{marginBottom:'16px'}}>Supabase config missing</h1>
+        <p>Vercel is not providing the required environment variables.</p>
+        <p>Please add these in your Vercel project settings under <strong>Environment Variables</strong>:</p>
+        <ul>
+          <li><code>VITE_SUPABASE_URL</code></li>
+          <li><code>VITE_SUPABASE_ANON_KEY</code></li>
+        </ul>
+        <p>Then redeploy.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
