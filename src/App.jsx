@@ -12,6 +12,7 @@ const ADMIN_USERNAME = "admin";
 const ADMIN_PASSWORD = "admin123";
 const CODE_PIN = "1234"; 
 const SESSION_KEY = "dm_session";
+const CHECKLIST_RESET_KEY = "dm_checklist_reset";
 
 const getSession = () => {
   const raw = sessionStorage.getItem(SESSION_KEY);
@@ -89,12 +90,23 @@ export default function DutyManagerApp() {
   const [showLogin, setShowLogin] = useState(false);
   const [showReports, setShowReports] = useState(false);
   const [creds, setCreds] = useState({ user: '', pass: '' });
+  const [editChecklist, setEditChecklist] = useState({ id: null, text: '', type: 'daily' });
 
   const isAdmin = session?.role === "admin";
 
   const fetchData = useCallback(async () => {
     // Fetch today's attendance records
     const today = getToday();
+
+    const lastReset = localStorage.getItem(CHECKLIST_RESET_KEY);
+    if (lastReset !== today) {
+      const { error: resetError } = await supabase.from('checklists').update({ done: false }).neq('done', false);
+      if (resetError) {
+        console.error("Checklist Reset Error:", resetError.message);
+      } else {
+        localStorage.setItem(CHECKLIST_RESET_KEY, today);
+      }
+    }
 
     const { data: p, error: pError } = await supabase
       .from('profiles')
@@ -194,6 +206,21 @@ export default function DutyManagerApp() {
     }
   };
 
+  const saveChecklistEdit = async () => {
+    if (!editChecklist.text.trim()) return;
+    const { error } = await supabase.from('checklists').update({
+      text: editChecklist.text.trim(),
+      type: editChecklist.type
+    }).eq('id', editChecklist.id);
+
+    if (error) {
+      alert("Checklist Update Error: " + error.message);
+    } else {
+      setEditChecklist({ id: null, text: '', type: 'daily' });
+      fetchData();
+    }
+  };
+
   const deleteItem = async (table, id) => {
     if (confirm("Delete this item?")) {
       const { error } = await supabase.from(table).delete().eq('id', id);
@@ -283,13 +310,59 @@ export default function DutyManagerApp() {
             )}
             {(checklists[checklistTab] || []).map(t => (
               <div key={t.id} className="item-row">
-                 <div onClick={async()=>{await supabase.from('checklists').update({done:!t.done}).eq('id',t.id); fetchData();}} style={{display:'flex', gap:'10px', alignItems:'center', flex:1}}>
+                 <div onClick={async()=>{await supabase.from('checklists').update({done:!t.done}).eq('id',t.id); fetchData();}} style={{display:'flex', gap:'10px', alignItems:'center', flex:1, cursor:'pointer'}}>
                     <div style={{width:'20px', height:'20px', border:'2px solid var(--border)', borderRadius:'4px', background:t.done?'var(--accent)':'none', color:'white', display:'flex', alignItems:'center', justifyContent:'center'}}>
                       {t.done && '✓'}
                     </div>
-                    <span style={{textDecoration: t.done?'line-through':'none'}}>{t.text}</span>
+                    {editChecklist.id === t.id ? (
+                      <input
+                        className="input"
+                        value={editChecklist.text}
+                        onChange={e => setEditChecklist({...editChecklist, text: e.target.value})}
+                        onClick={e => e.stopPropagation()}
+                        style={{flex:1, margin:0, padding:'8px'}}
+                      />
+                    ) : (
+                      <span style={{textDecoration: t.done?'line-through':'none'}}>{t.text}</span>
+                    )}
                  </div>
-                 {isAdmin && <button onClick={()=>deleteItem('checklists', t.id)} style={{color:'red', border:'none', background:'none'}}><I.Trash/></button>}
+                 <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
+                   {isAdmin && editChecklist.id === t.id ? (
+                     <>
+                       <select
+                         value={editChecklist.type}
+                         onChange={e => setEditChecklist({...editChecklist, type: e.target.value})}
+                         style={{padding:'6px 8px', borderRadius:'8px', border:'1px solid var(--border)'}}
+                       >
+                         <option value="daily">Daily</option>
+                         <option value="bar">Bar</option>
+                         <option value="fire">Fire</option>
+                       </select>
+                       <button
+                         onClick={async (e) => { e.stopPropagation(); await saveChecklistEdit(); }}
+                         className="btn"
+                         style={{padding:'6px 10px'}}
+                       >Save</button>
+                       <button
+                         onClick={(e) => { e.stopPropagation(); setEditChecklist({ id: null, text: '', type: 'daily' }); }}
+                         className="btn"
+                         style={{padding:'6px 10px', background:'#eee'}}
+                       >Cancel</button>
+                     </>
+                   ) : isAdmin ? (
+                     <>
+                       <button
+                         onClick={(e) => { e.stopPropagation(); setEditChecklist({ id: t.id, text: t.text, type: t.type || checklistTab }); }}
+                         className="btn"
+                         style={{padding:'6px 10px'}}
+                       >Edit</button>
+                       <button
+                         onClick={(e) => { e.stopPropagation(); deleteItem('checklists', t.id); }}
+                         style={{color:'red', border:'none', background:'none'}}
+                       ><I.Trash/></button>
+                     </>
+                   ) : null}
+                 </div>
               </div>
             ))}
           </div>
