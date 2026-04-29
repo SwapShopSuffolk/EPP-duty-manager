@@ -91,6 +91,7 @@ export default function DutyManagerApp() {
   const [showReports, setShowReports] = useState(false);
   const [creds, setCreds] = useState({ user: '', pass: '' });
   const [editChecklist, setEditChecklist] = useState({ id: null, text: '', type: 'daily' });
+  const [editContact, setEditContact] = useState({ id: null, name: '', phone: '' });
 
   const isAdmin = session?.role === "admin";
 
@@ -217,6 +218,21 @@ export default function DutyManagerApp() {
       alert("Checklist Update Error: " + error.message);
     } else {
       setEditChecklist({ id: null, text: '', type: 'daily' });
+      fetchData();
+    }
+  };
+
+  const saveContactEdit = async () => {
+    if (!editContact.name.trim()) return;
+    const { error } = await supabase.from('contacts').update({
+      name: editContact.name.trim(),
+      phone: editContact.phone.trim()
+    }).eq('id', editContact.id);
+
+    if (error) {
+      alert("Contact Update Error: " + error.message);
+    } else {
+      setEditContact({ id: null, name: '', phone: '' });
       fetchData();
     }
   };
@@ -399,17 +415,63 @@ export default function DutyManagerApp() {
                   <input className="input" placeholder="Name" value={contactForm.name} onChange={e=>setContactForm({...contactForm, name:e.target.value})} />
                   <input className="input" placeholder="Phone" value={contactForm.phone} onChange={e=>setContactForm({...contactForm, phone:e.target.value})} />
                   <button className="btn btn-primary" onClick={async()=>{
-                    if(!contactForm.name) return;
+                    if(!contactForm.name.trim()) return;
                     await supabase.from('contacts').insert([contactForm]); setContactForm({name:'', phone:''}); fetchData();
                   }}>Add Contact</button>
                </div>
             )}
             {contacts.map(c => (
               <div key={c.id} className="item-row">
-                <div><div style={{fontWeight:'bold'}}>{c.name}</div><div style={{color:'var(--muted)'}}>{c.phone}</div></div>
-                <div style={{display:'flex', gap:'8px'}}>
+                <div style={{flex:1}}>
+                  {editContact.id === c.id ? (
+                    <>
+                      <input
+                        className="input"
+                        value={editContact.name}
+                        onChange={e => setEditContact({...editContact, name: e.target.value})}
+                        style={{marginBottom:'8px'}}
+                      />
+                      <input
+                        className="input"
+                        value={editContact.phone}
+                        onChange={e => setEditContact({...editContact, phone: e.target.value})}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <div style={{fontWeight:'bold'}}>{c.name}</div>
+                      <div style={{color:'var(--muted)'}}>{c.phone}</div>
+                    </>
+                  )}
+                </div>
+                <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
                   <a href={`tel:${c.phone}`} className="btn" style={{background:'#eef2ff', color:'#4338ca', padding:'6px 12px'}}>Call</a>
-                  {isAdmin && <button onClick={()=>deleteItem('contacts', c.id)} style={{color:'red', border:'none', background:'none'}}><I.Trash/></button>}
+                  {isAdmin && editContact.id === c.id ? (
+                    <>
+                      <button
+                        className="btn"
+                        style={{padding:'6px 10px'}}
+                        onClick={saveContactEdit}
+                      >Save</button>
+                      <button
+                        className="btn"
+                        style={{padding:'6px 10px', background:'#eee'}}
+                        onClick={() => setEditContact({ id: null, name: '', phone: '' })}
+                      >Cancel</button>
+                    </>
+                  ) : isAdmin ? (
+                    <>
+                      <button
+                        className="btn"
+                        style={{padding:'6px 10px'}}
+                        onClick={() => setEditContact({ id: c.id, name: c.name, phone: c.phone })}
+                      >Edit</button>
+                      <button
+                        onClick={() => deleteItem('contacts', c.id)}
+                        style={{color:'red', border:'none', background:'none'}}
+                      ><I.Trash/></button>
+                    </>
+                  ) : null}
                 </div>
               </div>
             ))}
