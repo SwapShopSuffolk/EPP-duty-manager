@@ -1,11 +1,20 @@
 import { createClient } from '@supabase/supabase-js'
 import { useState, useEffect, useCallback } from "react";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-const supabase = supabaseUrl && supabaseAnonKey
-  ? createClient(supabaseUrl, supabaseAnonKey)
-  : null
+const rawSupabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? ''
+const rawSupabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? ''
+const supabaseUrl = rawSupabaseUrl.trim()
+const supabaseAnonKey = rawSupabaseAnonKey.trim()
+let supabase = null
+let supabaseInitError = null
+
+try {
+  if (supabaseUrl && supabaseAnonKey) {
+    supabase = createClient(supabaseUrl, supabaseAnonKey)
+  }
+} catch (err) {
+  supabaseInitError = err?.message || String(err)
+}
 
 // ─────────────────────────────────────────────
 //  CONFIG & HELPERS
@@ -97,7 +106,7 @@ export default function DutyManagerApp() {
   const [appError, setAppError] = useState(null);
 
   const isAdmin = session?.role === "admin";
-  const missingSupabaseConfig = !supabaseUrl || !supabaseAnonKey;
+  const supabaseConfigError = supabaseInitError || (!supabaseUrl || !supabaseAnonKey ? 'Supabase environment variables are missing or empty.' : null);
 
   const fetchData = useCallback(async () => {
     if (!supabase) return;
@@ -291,12 +300,12 @@ export default function DutyManagerApp() {
     );
   }
 
-  if (missingSupabaseConfig) {
+  if (supabaseConfigError) {
     return (
       <div style={{padding:'24px',fontFamily:'DM Sans,sans-serif',background:'#f4f4f2',minHeight:'100vh'}}>
-        <h1 style={{marginBottom:'16px'}}>Supabase config missing</h1>
-        <p>Vercel is not providing the required environment variables.</p>
-        <p>Please add these in your Vercel project settings under <strong>Environment Variables</strong>:</p>
+        <h1 style={{marginBottom:'16px'}}>Supabase configuration error</h1>
+        <p>{supabaseConfigError}</p>
+        <p>Check the following environment variables in Vercel:</p>
         <ul>
           <li><code>VITE_SUPABASE_URL</code></li>
           <li><code>VITE_SUPABASE_ANON_KEY</code></li>
