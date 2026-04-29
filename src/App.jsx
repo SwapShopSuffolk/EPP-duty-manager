@@ -130,6 +130,8 @@ export default function DutyManagerApp() {
   const [codes, setCodes] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [checklists, setChecklists] = useState({ daily: emptyChecklistRow('daily'), bar: emptyChecklistRow('bar'), fire: emptyChecklistRow('fire') });
+  const [checklistTable, setChecklistTable] = useState('checklist');
+  const [fetchWarning, setFetchWarning] = useState(null);
   
   const [siName, setSiName] = useState("");
   const [siRole, setSiRole] = useState("");
@@ -153,6 +155,26 @@ export default function DutyManagerApp() {
     setNewTaskType(checklistTab);
   }, [checklistTab]);
 
+  const tryChecklistTable = async (tableName, today) => {
+    const { data, error } = await supabase.from(tableName).select('*').eq('date', today);
+    return { data, error, tableName };
+  };
+
+  const fetchChecklistRows = async (today) => {
+    let result = await tryChecklistTable('checklist', today);
+    if (result.error && /Could not find the table/i.test(result.error.message)) {
+      const fallback = await tryChecklistTable('checklists', today);
+      if (!fallback.error) {
+        setChecklistTable('checklists');
+        return fallback;
+      }
+    }
+    if (!result.error) {
+      setChecklistTable('checklist');
+    }
+    return result;
+  };
+
   const fetchData = useCallback(async () => {
     if (!supabase) return;
     try {
@@ -172,14 +194,17 @@ export default function DutyManagerApp() {
 
     const { data: n, error: nError } = await supabase.from('notes').select('*').order('id', { ascending: false });
     const { data: cd, error: cdError } = await supabase.from('secure_codes').select('*').order('label');
-    const { data: cl, error: clError } = await supabase.from('checklist').select('*').eq('date', today);
+    const { data: cl, error: clError } = await fetchChecklistRows(today);
     const { data: ct, error: ctError } = await supabase.from('contacts').select('*').order('name');
 
     if (nError) console.error("Notes Fetch Error:", nError.message);
     if (cdError) console.error("Codes Fetch Error:", cdError.message);
     if (clError) {
       console.error("Checklist Fetch Error:", clError.message);
-      setAppError("Checklist Fetch Error: " + clError.message);
+      setFetchWarning("Checklist fetch failed: " + clError.message);
+      setChecklists({ daily: emptyChecklistRow('daily'), bar: emptyChecklistRow('bar'), fire: emptyChecklistRow('fire') });
+    } else {
+      setFetchWarning(null);
     }
     if (ctError) console.error("Contacts Fetch Error:", ctError.message);
 
@@ -298,13 +323,21 @@ export default function DutyManagerApp() {
       total_count: items.length
     };
 
-    if (row.id) {
-      const { error } = await supabase.from('checklist').update(payload).eq('id', row.id);
-      if (error) throw error;
-    } else {
-      const { error } = await supabase.from('checklist').insert([payload]);
-      if (error) throw error;
+    const write = async (tableName) => {
+      if (row.id) {
+        return await supabase.from(tableName).update(payload).eq('id', row.id);
+      }
+      return await supabase.from(tableName).insert([payload]);
+    };
+
+    let tableName = checklistTable || 'checklist';
+    let result = await write(tableName);
+    if (result.error && /Could not find the table/i.test(result.error.message) && tableName === 'checklist') {
+      tableName = 'checklists';
+      setChecklistTable('checklists');
+      result = await write(tableName);
     }
+    if (result.error) throw result.error;
 
     fetchData();
   };
@@ -402,6 +435,11 @@ export default function DutyManagerApp() {
           {isAdmin ? 'Logout' : 'Admin'}
         </button>
       </header>
+      {fetchWarning && (
+        <div className="card" style={{border:'1px solid #f5c6cb', background:'#fff0f0', color:'#721c24'}}>
+          <strong>Warning:</strong> {fetchWarning}
+        </div>
+      )}
 
       <nav className="nav">
         <button className={`nav-btn ${tab==='home'?'active':''}`} onClick={()=>setTab('home')}><I.Home/>Home</button>
