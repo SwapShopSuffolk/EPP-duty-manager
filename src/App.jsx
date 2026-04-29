@@ -24,6 +24,7 @@ const ADMIN_PASSWORD = "admin123";
 const CODE_PIN = "1234"; 
 const SESSION_KEY = "dm_session";
 const CHECKLIST_RESET_KEY = "dm_checklist_reset";
+const CHECKLIST_TYPES = ["daily", "bar", "fire"];
 
 const getSession = () => {
   const raw = sessionStorage.getItem(SESSION_KEY);
@@ -151,7 +152,10 @@ export default function DutyManagerApp() {
     if (ct) setContacts(ct);
     if (cl) {
       const sorted = { daily: [], bar: [], fire: [] };
-      cl.forEach(t => { if(sorted[t.type]) sorted[t.type].push(t); });
+      cl.forEach(t => {
+        const type = CHECKLIST_TYPES.includes(t.type) ? t.type : 'daily';
+        sorted[type].push(t);
+      });
       setChecklists(sorted);
     }
     } catch (err) {
@@ -389,7 +393,8 @@ export default function DutyManagerApp() {
                 <input className="input" placeholder="New master task..." value={taskInput} onChange={e=>setTaskInput(e.target.value)} />
                 <button className="btn btn-primary" style={{width:'auto'}} onClick={async()=>{
                   if(!taskInput.trim())return;
-                  await supabase.from('checklists').insert([{text:taskInput, type:checklistTab, done:false}]);
+                  const taskType = CHECKLIST_TYPES.includes(checklistTab) ? checklistTab : 'daily';
+                  await supabase.from('checklists').insert([{text:taskInput.trim(), type:taskType, done:false}]);
                   setTaskInput(""); fetchData();
                 }}><I.Plus/></button>
               </div>
