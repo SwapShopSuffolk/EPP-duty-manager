@@ -18,6 +18,12 @@ const getSession = () => {
   return raw ? JSON.parse(raw) : null;
 };
 
+const getToday = () => {
+  const d = new Date();
+  return d.getFullYear() + "-" +
+    String(d.getMonth() + 1).padStart(2, "0") + "-" +
+    String(d.getDate()).padStart(2, "0");
+};
 const fmtTime = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
 const I = {
@@ -87,12 +93,14 @@ export default function DutyManagerApp() {
   const isAdmin = session?.role === "admin";
 
   const fetchData = useCallback(async () => {
-    // FIX: Removed strict timezone filter, limiting to last 20 entries instead
-    const { data: p, error: pError } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('id', { ascending: false })
-      .limit(20);
+    // Fetch today's attendance records
+    const today = getToday();
+
+const { data: p, error: pError } = await supabase
+  .from('profiles')
+  .select('*')
+  .eq('date', today)
+  .order('id', { ascending: false });
 
     if (pError) console.error("Profile Fetch Error:", pError.message);
 
@@ -129,22 +137,45 @@ export default function DutyManagerApp() {
   };
 
   const handleSignIn = async () => {
-    if (!siName.trim()) return;
-    const { error } = await supabase.from('profiles').insert([{ name: siName, role: siRole || "Staff", sign_in: fmtTime() }]);
-    if (error) {
-        alert("Sign In Error: " + error.message);
-    } else {
-        setSiName(""); setSiRole(""); 
-        setTimeout(fetchData, 500);
-    }
-  };
+  if (!siName.trim()) return;
+
+  const today = getToday();
+
+  // Prevent duplicate sign-in
+  const { data: existing } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('name', siName)
+    .eq('date', today)
+    .maybeSingle();
+
+  if (existing) {
+    alert("Already signed in today");
+    return;
+  }
+
+  const { error } = await supabase.from('profiles').insert([{
+    name: siName,
+    role: siRole || "Staff",
+    date: today, // ✅ KEY FIX
+    sign_in: fmtTime()
+  }]);
+
+  if (error) {
+    alert("Sign In Error: " + error.message);
+  } else {
+    setSiName("");
+    setSiRole("");
+    fetchData(); // ✅ removed timeout
+  }
+};
 
   const handleSignOut = async (id) => {
     const { error } = await supabase.from('profiles').update({ sign_out: fmtTime() }).eq('id', id);
     if (error) {
         alert("Sign Out Error: " + error.message);
     } else {
-        setTimeout(fetchData, 500);
+        fetchData();
     }
   };
 
