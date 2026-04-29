@@ -94,24 +94,26 @@ export default function DutyManagerApp() {
   const [creds, setCreds] = useState({ user: '', pass: '' });
   const [editChecklist, setEditChecklist] = useState({ id: null, text: '', type: 'daily' });
   const [editContact, setEditContact] = useState({ id: null, name: '', phone: '' });
+  const [appError, setAppError] = useState(null);
 
   const isAdmin = session?.role === "admin";
   const missingSupabaseConfig = !supabaseUrl || !supabaseAnonKey;
 
   const fetchData = useCallback(async () => {
     if (!supabase) return;
-    // Fetch today's attendance records
-    const today = getToday();
+    try {
+      // Fetch today's attendance records
+      const today = getToday();
 
-    const lastReset = localStorage.getItem(CHECKLIST_RESET_KEY);
-    if (lastReset !== today) {
-      const { error: resetError } = await supabase.from('checklists').update({ done: false }).neq('done', false);
-      if (resetError) {
-        console.error("Checklist Reset Error:", resetError.message);
-      } else {
-        localStorage.setItem(CHECKLIST_RESET_KEY, today);
+      const lastReset = localStorage.getItem(CHECKLIST_RESET_KEY);
+      if (lastReset !== today) {
+        const { error: resetError } = await supabase.from('checklists').update({ done: false }).neq('done', false);
+        if (resetError) {
+          console.error("Checklist Reset Error:", resetError.message);
+        } else {
+          localStorage.setItem(CHECKLIST_RESET_KEY, today);
+        }
       }
-    }
 
     const { data: p, error: pError } = await supabase
       .from('profiles')
@@ -143,9 +145,28 @@ export default function DutyManagerApp() {
       cl.forEach(t => { if(sorted[t.type]) sorted[t.type].push(t); });
       setChecklists(sorted);
     }
+    } catch (err) {
+      console.error("FetchData Error:", err);
+      setAppError(err?.message || String(err));
+    }
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  useEffect(() => {
+    const handleError = (event) => {
+      setAppError(event.error?.message || event.message || 'Unknown error');
+    };
+    const handleRejection = (event) => {
+      setAppError(event.reason?.message || JSON.stringify(event.reason) || 'Unhandled promise rejection');
+    };
+    window.addEventListener('error', handleError);
+    window.addEventListener('unhandledrejection', handleRejection);
+    return () => {
+      window.removeEventListener('error', handleError);
+      window.removeEventListener('unhandledrejection', handleRejection);
+    };
+  }, []);
 
   const handleExport = async (days) => {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -164,41 +185,51 @@ export default function DutyManagerApp() {
   const handleSignIn = async () => {
   if (!siName.trim()) return;
 
-  const today = getToday();
+  if (!supabase) {
+    setAppError('Supabase not configured.');
+    return;
+  }
 
-  // Prevent duplicate active sign-in on the same day
-  const { data: existing, error: existingError } = await supabase
-    .from('profiles')
-    .select('id, sign_out')
+  try {
+    const today = getToday();
+
+    // Prevent duplicate active sign-in on the same day
+    const { data: existing, error: existingError } = await supabase
+      .from('profiles')
+      .select('id, sign_out')
     .eq('name', siName)
     .eq('date', today)
     .order('id', { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (existingError) {
-    alert("Sign In Error: " + existingError.message);
-    return;
-  }
+    if (existingError) {
+      alert("Sign In Error: " + existingError.message);
+      return;
+    }
 
-  if (existing && !existing.sign_out) {
-    alert("Already signed in today");
-    return;
-  }
+    if (existing && !existing.sign_out) {
+      alert("Already signed in today");
+      return;
+    }
 
-  const { error } = await supabase.from('profiles').insert([{
+    const { error } = await supabase.from('profiles').insert([{
     name: siName,
     role: siRole || "Staff",
     date: today,
     sign_in: fmtTime()
   }]);
 
-  if (error) {
-    alert("Sign In Error: " + error.message);
-  } else {
-    setSiName("");
-    setSiRole("");
-    fetchData();
+    if (error) {
+      alert("Sign In Error: " + error.message);
+    } else {
+      setSiName("");
+      setSiRole("");
+      fetchData();
+    }
+  } catch (err) {
+    console.error("handleSignIn Error:", err);
+    setAppError(err?.message || String(err));
   }
 };
 
@@ -249,6 +280,16 @@ export default function DutyManagerApp() {
       fetchData();
     }
   };
+
+  if (appError) {
+    return (
+      <div style={{padding:'24px',fontFamily:'DM Sans,sans-serif',background:'#f4f4f2',minHeight:'100vh'}}>
+        <h1 style={{marginBottom:'16px'}}>Application Error</h1>
+        <p>{appError}</p>
+        <p>Open the browser console for more details.</p>
+      </div>
+    );
+  }
 
   if (missingSupabaseConfig) {
     return (
