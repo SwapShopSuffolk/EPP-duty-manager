@@ -96,18 +96,26 @@ export default function DutyManagerApp() {
     // Fetch today's attendance records
     const today = getToday();
 
-const { data: p, error: pError } = await supabase
-  .from('profiles')
-  .select('*')
-  .eq('date', today)
-  .order('id', { ascending: false });
+    const { data: p, error: pError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('date', today)
+      .order('id', { ascending: false });
 
-    if (pError) console.error("Profile Fetch Error:", pError.message);
+    if (pError) {
+      console.error("Profile Fetch Error:", pError.message);
+      setSignInHistory([]);
+    }
 
-    const { data: n } = await supabase.from('notes').select('*').order('id', { ascending: false });
-    const { data: cd } = await supabase.from('secure_codes').select('*').order('label');
-    const { data: cl } = await supabase.from('checklists').select('*');
-    const { data: ct } = await supabase.from('contacts').select('*').order('name');
+    const { data: n, error: nError } = await supabase.from('notes').select('*').order('id', { ascending: false });
+    const { data: cd, error: cdError } = await supabase.from('secure_codes').select('*').order('label');
+    const { data: cl, error: clError } = await supabase.from('checklists').select('*');
+    const { data: ct, error: ctError } = await supabase.from('contacts').select('*').order('name');
+
+    if (nError) console.error("Notes Fetch Error:", nError.message);
+    if (cdError) console.error("Codes Fetch Error:", cdError.message);
+    if (clError) console.error("Checklists Fetch Error:", clError.message);
+    if (ctError) console.error("Contacts Fetch Error:", ctError.message);
 
     if (p) setSignInHistory(p);
     if (n) setNoteHistory(n);
@@ -141,15 +149,22 @@ const { data: p, error: pError } = await supabase
 
   const today = getToday();
 
-  // Prevent duplicate sign-in
-  const { data: existing } = await supabase
+  // Prevent duplicate active sign-in on the same day
+  const { data: existing, error: existingError } = await supabase
     .from('profiles')
-    .select('*')
+    .select('id, sign_out')
     .eq('name', siName)
     .eq('date', today)
+    .order('id', { ascending: false })
+    .limit(1)
     .maybeSingle();
 
-  if (existing) {
+  if (existingError) {
+    alert("Sign In Error: " + existingError.message);
+    return;
+  }
+
+  if (existing && !existing.sign_out) {
     alert("Already signed in today");
     return;
   }
@@ -157,7 +172,7 @@ const { data: p, error: pError } = await supabase
   const { error } = await supabase.from('profiles').insert([{
     name: siName,
     role: siRole || "Staff",
-    date: today, // ✅ KEY FIX
+    date: today,
     sign_in: fmtTime()
   }]);
 
@@ -166,7 +181,7 @@ const { data: p, error: pError } = await supabase
   } else {
     setSiName("");
     setSiRole("");
-    fetchData(); // ✅ removed timeout
+    fetchData();
   }
 };
 
