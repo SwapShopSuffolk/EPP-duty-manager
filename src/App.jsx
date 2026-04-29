@@ -21,9 +21,8 @@ try {
 // ─────────────────────────────────────────────
 const ADMIN_USERNAME = "admin";
 const ADMIN_PASSWORD = "admin123";
-const CODE_PIN = "1234"; 
+const CODE_PIN = "1234";
 const SESSION_KEY = "dm_session";
-const CHECKLIST_RESET_KEY = "dm_checklist_reset";
 const CHECKLIST_TYPES = ["daily", "bar", "fire"];
 
 const getSession = () => {
@@ -38,6 +37,46 @@ const getToday = () => {
     String(d.getDate()).padStart(2, "0");
 };
 const fmtTime = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+const parseChecklistItems = (raw) => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map(item => ({ text: String(item?.text ?? item), done: !!item?.done }));
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(item => ({ text: String(item?.text ?? item), done: !!item?.done }));
+    } catch (e) {
+      // ignore
+    }
+    return raw.split(/\r?\n|;/).map(s => s.trim()).filter(Boolean).map(text => ({ text, done: false }));
+  }
+  return [];
+};
+
+const serializeChecklistItems = (items) => JSON.stringify(items.map(item => ({ text: item.text, done: !!item.done })));
+
+const emptyChecklistRow = (type) => ({ id: null, type, items: [], completed_count: 0, total_count: 0 });
+
+const buildChecklistState = (rows) => {
+  const state = {
+    daily: emptyChecklistRow('daily'),
+    bar: emptyChecklistRow('bar'),
+    fire: emptyChecklistRow('fire')
+  };
+  rows?.forEach(row => {
+    const type = CHECKLIST_TYPES.includes(row.type) ? row.type : 'daily';
+    const items = parseChecklistItems(row.items);
+    state[type] = {
+      id: row.id,
+      type,
+      items,
+      completed_count: row.completed_count ?? items.filter(i => i.done).length,
+      total_count: row.total_count ?? items.length,
+      date: row.date
+    };
+  });
+  return state;
+};
 
 const I = {
   Home: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
@@ -90,40 +129,35 @@ export default function DutyManagerApp() {
   const [noteHistory, setNoteHistory] = useState([]);
   const [codes, setCodes] = useState([]);
   const [contacts, setContacts] = useState([]);
-  const [checklists, setChecklists] = useState({ daily: [], bar: [], fire: [] });
+  const [checklists, setChecklists] = useState({ daily: emptyChecklistRow('daily'), bar: emptyChecklistRow('bar'), fire: emptyChecklistRow('fire') });
   
   const [siName, setSiName] = useState("");
   const [siRole, setSiRole] = useState("");
   const [noteText, setNoteText] = useState("");
   const [taskInput, setTaskInput] = useState("");
+  const [newTaskType, setNewTaskType] = useState('daily');
   const [contactForm, setContactForm] = useState({ name: '', phone: '' });
   const [codeForm, setCodeForm] = useState({ label: '', code: '' });
   const [codesUnlocked, setCodesUnlocked] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [showReports, setShowReports] = useState(false);
   const [creds, setCreds] = useState({ user: '', pass: '' });
-  const [editChecklist, setEditChecklist] = useState({ id: null, text: '', type: 'daily' });
+  const [editChecklist, setEditChecklist] = useState({ type: null, index: null, text: '' });
   const [editContact, setEditContact] = useState({ id: null, name: '', phone: '' });
   const [appError, setAppError] = useState(null);
 
   const isAdmin = session?.role === "admin";
   const supabaseConfigError = supabaseInitError || (!supabaseUrl || !supabaseAnonKey ? 'Supabase environment variables are missing or empty.' : null);
 
+  useEffect(() => {
+    setNewTaskType(checklistTab);
+  }, [checklistTab]);
+
   const fetchData = useCallback(async () => {
     if (!supabase) return;
     try {
       // Fetch today's attendance records
       const today = getToday();
-
-      const lastReset = localStorage.getItem(CHECKLIST_RESET_KEY);
-      if (lastReset !== today) {
-        const { error: resetError } = await supabase.from('checklists').update({ done: false }).neq('done', false);
-        if (resetError) {
-          console.error("Checklist Reset Error:", resetError.message);
-        } else {
-          localStorage.setItem(CHECKLIST_RESET_KEY, today);
-        }
-      }
 
     const { data: p, error: pError } = await supabase
       .from('profiles')
@@ -138,12 +172,15 @@ export default function DutyManagerApp() {
 
     const { data: n, error: nError } = await supabase.from('notes').select('*').order('id', { ascending: false });
     const { data: cd, error: cdError } = await supabase.from('secure_codes').select('*').order('label');
-    const { data: cl, error: clError } = await supabase.from('checklists').select('*');
+    const { data: cl, error: clError } = await supabase.from('checklist').select('*').eq('date', today);
     const { data: ct, error: ctError } = await supabase.from('contacts').select('*').order('name');
 
     if (nError) console.error("Notes Fetch Error:", nError.message);
     if (cdError) console.error("Codes Fetch Error:", cdError.message);
-    if (clError) console.error("Checklists Fetch Error:", clError.message);
+    if (clError) {
+      console.error("Checklist Fetch Error:", clError.message);
+      setAppError("Checklist Fetch Error: " + clError.message);
+    }
     if (ctError) console.error("Contacts Fetch Error:", ctError.message);
 
     if (p) setSignInHistory(p);
@@ -151,12 +188,7 @@ export default function DutyManagerApp() {
     if (cd) setCodes(cd);
     if (ct) setContacts(ct);
     if (cl) {
-      const sorted = { daily: [], bar: [], fire: [] };
-      cl.forEach(t => {
-        const type = CHECKLIST_TYPES.includes(t.type) ? t.type : 'daily';
-        sorted[type].push(t);
-      });
-      setChecklists(sorted);
+      setChecklists(buildChecklistState(cl));
     }
     } catch (err) {
       console.error("FetchData Error:", err);
@@ -255,18 +287,60 @@ export default function DutyManagerApp() {
     }
   };
 
-  const saveChecklistEdit = async () => {
-    if (!editChecklist.text.trim()) return;
-    const { error } = await supabase.from('checklists').update({
-      text: editChecklist.text.trim(),
-      type: editChecklist.type
-    }).eq('id', editChecklist.id);
+  const saveChecklistRow = async (type, items) => {
+    const row = checklists[type] || emptyChecklistRow(type);
+    const completed = items.filter(i => i.done).length;
+    const payload = {
+      date: getToday(),
+      type,
+      items: serializeChecklistItems(items),
+      completed_count: completed,
+      total_count: items.length
+    };
 
-    if (error) {
-      alert("Checklist Update Error: " + error.message);
+    if (row.id) {
+      const { error } = await supabase.from('checklist').update(payload).eq('id', row.id);
+      if (error) throw error;
     } else {
-      setEditChecklist({ id: null, text: '', type: 'daily' });
-      fetchData();
+      const { error } = await supabase.from('checklist').insert([payload]);
+      if (error) throw error;
+    }
+
+    fetchData();
+  };
+
+  const saveChecklistItemEdit = async () => {
+    if (editChecklist.type === null || editChecklist.index === null || !editChecklist.text.trim()) return;
+    const row = checklists[editChecklist.type] || emptyChecklistRow(editChecklist.type);
+    const updatedItems = row.items.map((item, idx) => idx === editChecklist.index ? { ...item, text: editChecklist.text.trim() } : item);
+    try {
+      await saveChecklistRow(editChecklist.type, updatedItems);
+      setEditChecklist({ type: null, index: null, text: '' });
+    } catch (error) {
+      alert("Checklist Update Error: " + error.message);
+    }
+  };
+
+  const deleteChecklistItem = async (type, index) => {
+    const row = checklists[type] || emptyChecklistRow(type);
+    const updatedItems = row.items.filter((_, idx) => idx !== index);
+    try {
+      await saveChecklistRow(type, updatedItems);
+      if (editChecklist.type === type && editChecklist.index === index) {
+        setEditChecklist({ type: null, index: null, text: '' });
+      }
+    } catch (error) {
+      alert("Checklist Delete Error: " + error.message);
+    }
+  };
+
+  const toggleChecklistItem = async (type, index) => {
+    const row = checklists[type] || emptyChecklistRow(type);
+    const updatedItems = row.items.map((item, idx) => idx === index ? { ...item, done: !item.done } : item);
+    try {
+      await saveChecklistRow(type, updatedItems);
+    } catch (error) {
+      alert("Checklist Update Error: " + error.message);
     }
   };
 
@@ -343,7 +417,7 @@ export default function DutyManagerApp() {
           <>
             <div className="ov-grid">
               <div className="ov-tile"><div className="ov-label">On Duty</div><div className="ov-val">{signInHistory.filter(s => !s.sign_out).length}</div></div>
-              <div className="ov-tile"><div className="ov-label">Daily Progress</div><div className="ov-val">{Math.round((checklists.daily.filter(i => i.done).length / (checklists.daily.length || 1)) * 100)}%</div></div>
+              <div className="ov-tile"><div className="ov-label">Daily Progress</div><div className="ov-val">{Math.round(((checklists.daily?.items || []).filter(i => i.done).length / ((checklists.daily?.items || []).length || 1)) * 100)}%</div></div>
             </div>
             {isAdmin && (
               <div className="card">
@@ -389,23 +463,34 @@ export default function DutyManagerApp() {
               <button className={`sub-btn ${checklistTab==='fire'?'active':''}`} onClick={()=>setChecklistTab('fire')}>Fire</button>
             </div>
             {isAdmin && (
-              <div style={{display:'flex', gap:'8px', marginBottom:'15px'}}>
-                <input className="input" placeholder="New master task..." value={taskInput} onChange={e=>setTaskInput(e.target.value)} />
+              <div style={{display:'flex', gap:'8px', flexWrap:'wrap', marginBottom:'15px'}}>
+                <input className="input" placeholder="New master task..." value={taskInput} onChange={e=>setTaskInput(e.target.value)} style={{flex:'1 1 240px'}} />
+                <select className="input" value={newTaskType} onChange={e=>setNewTaskType(e.target.value)} style={{width:'140px', marginBottom:'0'}}>
+                  {CHECKLIST_TYPES.map(type => <option key={type} value={type}>{type.charAt(0).toUpperCase()+type.slice(1)}</option>)}
+                </select>
                 <button className="btn btn-primary" style={{width:'auto'}} onClick={async()=>{
                   if(!taskInput.trim())return;
-                  const taskType = CHECKLIST_TYPES.includes(checklistTab) ? checklistTab : 'daily';
-                  await supabase.from('checklists').insert([{text:taskInput.trim(), type:taskType, done:false}]);
-                  setTaskInput(""); fetchData();
+                  try {
+                    const current = checklists[newTaskType] || emptyChecklistRow(newTaskType);
+                    const newItems = [...current.items, { text: taskInput.trim(), done: false }];
+                    await saveChecklistRow(newTaskType, newItems);
+                    setTaskInput("");
+                    setNewTaskType(checklistTab);
+                  } catch (error) {
+                    alert('Add task failed: ' + error.message);
+                  }
                 }}><I.Plus/></button>
               </div>
             )}
-            {(checklists[checklistTab] || []).map(t => (
-              <div key={t.id} className="item-row">
-                 <div onClick={async()=>{await supabase.from('checklists').update({done:!t.done}).eq('id',t.id); fetchData();}} style={{display:'flex', gap:'10px', alignItems:'center', flex:1, cursor:'pointer'}}>
-                    <div style={{width:'20px', height:'20px', border:'2px solid var(--border)', borderRadius:'4px', background:t.done?'var(--accent)':'none', color:'white', display:'flex', alignItems:'center', justifyContent:'center'}}>
-                      {t.done && '✓'}
+            {(() => {
+              const current = checklists[checklistTab] || emptyChecklistRow(checklistTab);
+              return current.items.map((item, idx) => (
+                <div key={`${checklistTab}-${idx}`} className="item-row">
+                  <div onClick={async()=>{ if (editChecklist.type === checklistTab && editChecklist.index === idx) return; await toggleChecklistItem(checklistTab, idx); }} style={{display:'flex', gap:'10px', alignItems:'center', flex:1, cursor:'pointer'}}>
+                    <div style={{width:'20px', height:'20px', border:'2px solid var(--border)', borderRadius:'4px', background:item.done?'var(--accent)':'none', color:'white', display:'flex', alignItems:'center', justifyContent:'center'}}>
+                      {item.done && '✓'}
                     </div>
-                    {editChecklist.id === t.id ? (
+                    {editChecklist.type === checklistTab && editChecklist.index === idx ? (
                       <input
                         className="input"
                         value={editChecklist.text}
@@ -414,48 +499,40 @@ export default function DutyManagerApp() {
                         style={{flex:1, margin:0, padding:'8px'}}
                       />
                     ) : (
-                      <span style={{textDecoration: t.done?'line-through':'none'}}>{t.text}</span>
+                      <span style={{textDecoration: item.done ? 'line-through' : 'none'}}>{item.text}</span>
                     )}
-                 </div>
-                 <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
-                   {isAdmin && editChecklist.id === t.id ? (
-                     <>
-                       <select
-                         value={editChecklist.type}
-                         onChange={e => setEditChecklist({...editChecklist, type: e.target.value})}
-                         style={{padding:'6px 8px', borderRadius:'8px', border:'1px solid var(--border)'}}
-                       >
-                         <option value="daily">Daily</option>
-                         <option value="bar">Bar</option>
-                         <option value="fire">Fire</option>
-                       </select>
-                       <button
-                         onClick={async (e) => { e.stopPropagation(); await saveChecklistEdit(); }}
-                         className="btn"
-                         style={{padding:'6px 10px'}}
-                       >Save</button>
-                       <button
-                         onClick={(e) => { e.stopPropagation(); setEditChecklist({ id: null, text: '', type: 'daily' }); }}
-                         className="btn"
-                         style={{padding:'6px 10px', background:'#eee'}}
-                       >Cancel</button>
-                     </>
-                   ) : isAdmin ? (
-                     <>
-                       <button
-                         onClick={(e) => { e.stopPropagation(); setEditChecklist({ id: t.id, text: t.text, type: t.type || checklistTab }); }}
-                         className="btn"
-                         style={{padding:'6px 10px'}}
-                       >Edit</button>
-                       <button
-                         onClick={(e) => { e.stopPropagation(); deleteItem('checklists', t.id); }}
-                         style={{color:'red', border:'none', background:'none'}}
-                       ><I.Trash/></button>
-                     </>
-                   ) : null}
-                 </div>
-              </div>
-            ))}
+                  </div>
+                  <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
+                    {isAdmin && editChecklist.type === checklistTab && editChecklist.index === idx ? (
+                      <>
+                        <button
+                          onClick={async (e) => { e.stopPropagation(); await saveChecklistItemEdit(); }}
+                          className="btn"
+                          style={{padding:'6px 10px'}}
+                        >Save</button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setEditChecklist({ type: null, index: null, text: '' }); }}
+                          className="btn"
+                          style={{padding:'6px 10px', background:'#eee'}}
+                        >Cancel</button>
+                      </>
+                    ) : isAdmin ? (
+                      <>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setEditChecklist({ type: checklistTab, index: idx, text: item.text }); }}
+                          className="btn"
+                          style={{padding:'6px 10px'}}
+                        >Edit</button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteChecklistItem(checklistTab, idx); }}
+                          style={{color:'red', border:'none', background:'none'}}
+                        ><I.Trash/></button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              ));
+            })()}
           </div>
         )}
 
