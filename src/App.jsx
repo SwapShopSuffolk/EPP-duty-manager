@@ -36,6 +36,13 @@ const getToday = () => {
     String(d.getMonth() + 1).padStart(2, "0") + "-" +
     String(d.getDate()).padStart(2, "0");
 };
+const getDateRangeStart = (days) => {
+  const d = new Date();
+  d.setDate(d.getDate() - Math.max(0, days - 1));
+  return d.getFullYear() + "-" +
+    String(d.getMonth() + 1).padStart(2, "0") + "-" +
+    String(d.getDate()).padStart(2, "0");
+};
 const fmtTime = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
 const parseChecklistItems = (raw) => {
@@ -138,14 +145,14 @@ export default function DutyManagerApp() {
   const [noteText, setNoteText] = useState("");
   const [taskInput, setTaskInput] = useState("");
   const [newTaskType, setNewTaskType] = useState('daily');
-  const [contactForm, setContactForm] = useState({ name: '', phone: '' });
+  const [contactForm, setContactForm] = useState({ name: '', role: '', number: '' });
   const [codeForm, setCodeForm] = useState({ label: '', code: '' });
   const [codesUnlocked, setCodesUnlocked] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [showReports, setShowReports] = useState(false);
   const [creds, setCreds] = useState({ user: '', pass: '' });
   const [editChecklist, setEditChecklist] = useState({ type: null, index: null, text: '' });
-  const [editContact, setEditContact] = useState({ id: null, name: '', phone: '' });
+  const [editContact, setEditContact] = useState({ id: null, name: '', role: '', number: '' });
   const [appError, setAppError] = useState(null);
 
   const isAdmin = session?.role === "admin";
@@ -241,14 +248,114 @@ export default function DutyManagerApp() {
     };
   }, []);
 
+  const fetchChecklistExportRows = async (cutoffDate) => {
+    const tryTable = async (tableName) => {
+      const { data, error } = await supabase.from(tableName)
+        .select('*')
+        .gte('date', cutoffDate)
+        .order('date', { ascending: true });
+      return { data, error, tableName };
+    };
+
+    let result = await tryTable('checklist');
+    if (result.error && /Could not find the table/i.test(result.error.message)) {
+      const fallback = await tryTable('checklists');
+      if (!fallback.error) {
+        setChecklistTable('checklists');
+        return fallback;
+      }
+    }
+    if (!result.error) {
+      setChecklistTable('checklist');
+    }
+    return result;
+  };
+
   const handleExport = async (days) => {
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-    const { data } = await supabase.from('profiles').select('*').gt('created_at', cutoff).order('created_at', { ascending: false });
-    if (!data?.length) return alert("No data.");
-    const headers = ["Date", "Name", "Role", "In", "Out"];
-    const csv = [headers, ...data.map(s => [new Date(s.created_at).toLocaleDateString(), s.name, s.role, s.sign_in, s.sign_out || "Active"])].map(e => e.join(",")).join("\n");
+    if (!supabase) {
+      setAppError('Supabase not configured.');
+      return;
+    }
+
+    const cutoffDate = getDateRangeStart(days);
+    const { data: profiles, error: profilesError } = await supabase.from('profiles')
+      .select('*')
+      .gte('date', cutoffDate)
+      .order('date', { ascending: false })
+      .order('id', { ascending: false });
+
+    const { data: checklistsData, error: checklistsError } = await fetchChecklistExportRows(cutoffDate);
+
+    if (profilesError) {
+      alert('Export Error: ' + profilesError.message);
+      return;
+    }
+    if (checklistsError) {
+      alert('Export Error: ' + checklistsError.message);
+      return;
+    }
+
+    const dailyChecklistByDate = new Map();
+    (checklistsData || []).forEach(row => {
+      if (row.type === 'daily') {
+        dailyChecklistByDate.set(row.date, {
+          completed_count: row.completed_count ?? parseChecklistItems(row.items).filter(i => i.done).length,
+          total_count: row.total_count ?? parseChecklistItems(row.items).length,
+        });
+      }
+    });
+
+    const reportRows = [];
+    const dates = new Set();
+    (profiles || []).forEach(p => dates.add(p.date));
+    dailyChecklistByDate.forEach((_, date) => dates.add(date));
+    const sortedDates = Array.from(dates).sort((a, b) => b.localeCompare(a));
+
+    sortedDates.forEach(date => {
+      const dateProfiles = (profiles || []).filter(p => p.date === date);
+      if (dateProfiles.length) {
+        dateProfiles.forEach(profile => {
+          const checklist = dailyChecklistByDate.get(date) || { completed_count: 0, total_count: 0 };
+          const dailyComplete = checklist.total_count > 0 && checklist.completed_count >= checklist.total_count;
+          reportRows.push({
+            date,
+            name: profile.name,
+            role: profile.role,
+            sign_in: profile.sign_in,
+            sign_out: profile.sign_out || 'Active',
+            checklist_progress: checklist.total_count ? `${checklist.completed_count}/${checklist.total_count}` : '0/0',
+            checklist_status: checklist.total_count ? (dailyComplete ? 'Complete' : 'Incomplete') : 'No checklist',
+          });
+        });
+      } else {
+        const checklist = dailyChecklistByDate.get(date);
+        if (checklist) {
+          const dailyComplete = checklist.total_count > 0 && checklist.completed_count >= checklist.total_count;
+          reportRows.push({
+            date,
+            name: '',
+            role: '',
+            sign_in: '',
+            sign_out: '',
+            checklist_progress: `${checklist.completed_count}/${checklist.total_count}`,
+            checklist_status: dailyComplete ? 'Complete' : 'Incomplete',
+          });
+        }
+      }
+    });
+
+    if (!reportRows.length) {
+      alert('No data.');
+      return;
+    }
+
+    const headers = ["Date", "Name", "Role", "Sign In", "Sign Out", "Daily Checklist Progress", "Daily Checklist Status"];
+    const csv = [headers, ...reportRows.map(row => [row.date, row.name, row.role, row.sign_in, row.sign_out, row.checklist_progress, row.checklist_status])]
+      .map(e => e.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
     const blob = new Blob([csv], { type: 'text/csv' });
-    const link = document.createElement("a");
+    const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `Report_${days}d.csv`;
     link.click();
@@ -384,13 +491,14 @@ export default function DutyManagerApp() {
     if (!editContact.name.trim()) return;
     const { error } = await supabase.from('contacts').update({
       name: editContact.name.trim(),
-      phone: editContact.phone.trim()
+      role: editContact.role.trim(),
+      number: editContact.number.trim()
     }).eq('id', editContact.id);
 
     if (error) {
       alert("Contact Update Error: " + error.message);
     } else {
-      setEditContact({ id: null, name: '', phone: '' });
+      setEditContact({ id: null, name: '', role: '', number: '' });
       fetchData();
     }
   };
@@ -606,10 +714,11 @@ export default function DutyManagerApp() {
             {isAdmin && (
                <div style={{marginBottom:'15px', paddingBottom:'15px', borderBottom:'1px dashed var(--border)'}}>
                   <input className="input" placeholder="Name" value={contactForm.name} onChange={e=>setContactForm({...contactForm, name:e.target.value})} />
-                  <input className="input" placeholder="Phone" value={contactForm.phone} onChange={e=>setContactForm({...contactForm, phone:e.target.value})} />
+                  <input className="input" placeholder="Role" value={contactForm.role} onChange={e=>setContactForm({...contactForm, role:e.target.value})} />
+                  <input className="input" placeholder="Number" value={contactForm.number} onChange={e=>setContactForm({...contactForm, number:e.target.value})} />
                   <button className="btn btn-primary" onClick={async()=>{
                     if(!contactForm.name.trim()) return;
-                    await supabase.from('contacts').insert([contactForm]); setContactForm({name:'', phone:''}); fetchData();
+                    await supabase.from('contacts').insert([contactForm]); setContactForm({name:'', role:'', number:''}); fetchData();
                   }}>Add Contact</button>
                </div>
             )}
@@ -626,19 +735,25 @@ export default function DutyManagerApp() {
                       />
                       <input
                         className="input"
-                        value={editContact.phone}
-                        onChange={e => setEditContact({...editContact, phone: e.target.value})}
+                        value={editContact.role}
+                        onChange={e => setEditContact({...editContact, role: e.target.value})}
+                        style={{marginBottom:'8px'}}
+                      />
+                      <input
+                        className="input"
+                        value={editContact.number}
+                        onChange={e => setEditContact({...editContact, number: e.target.value})}
                       />
                     </>
                   ) : (
                     <>
                       <div style={{fontWeight:'bold'}}>{c.name}</div>
-                      <div style={{color:'var(--muted)'}}>{c.phone}</div>
+                      <div style={{color:'var(--muted)'}}>{c.role}{c.role && c.number ? ' · ' : ''}{c.number}</div>
                     </>
                   )}
                 </div>
                 <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
-                  <a href={`tel:${c.phone}`} className="btn" style={{background:'#eef2ff', color:'#4338ca', padding:'6px 12px'}}>Call</a>
+                  <a href={`tel:${c.number}`} className="btn" style={{background:'#eef2ff', color:'#4338ca', padding:'6px 12px'}}>Call</a>
                   {isAdmin && editContact.id === c.id ? (
                     <>
                       <button
@@ -649,7 +764,7 @@ export default function DutyManagerApp() {
                       <button
                         className="btn"
                         style={{padding:'6px 10px', background:'#eee'}}
-                        onClick={() => setEditContact({ id: null, name: '', phone: '' })}
+                        onClick={() => setEditContact({ id: null, name: '', role: '', number: '' })}
                       >Cancel</button>
                     </>
                   ) : isAdmin ? (
@@ -657,7 +772,7 @@ export default function DutyManagerApp() {
                       <button
                         className="btn"
                         style={{padding:'6px 10px'}}
-                        onClick={() => setEditContact({ id: c.id, name: c.name, phone: c.phone })}
+                        onClick={() => setEditContact({ id: c.id, name: c.name, role: c.role, number: c.number })}
                       >Edit</button>
                       <button
                         onClick={() => deleteItem('contacts', c.id)}
