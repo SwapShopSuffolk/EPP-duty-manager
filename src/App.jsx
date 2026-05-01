@@ -351,16 +351,19 @@ export default function DutyManagerApp() {
 
     const headers = ["Date", "Name", "Role", "Sign In", "Sign Out", "Daily Checklist Progress", "Daily Checklist Status"];
     const csvRows = [headers];
+    let lastDate = null;
 
-    for (let i = 0; i < reportRows.length; i += 1) {
-      const row = reportRows[i];
-      const nextRow = reportRows[i + 1];
-      csvRows.push([`Date: ${row.date}`, '', '', '', '', '', '']);
+    reportRows.forEach((row, index) => {
+      if (row.date !== lastDate) {
+        csvRows.push([`Date: ${row.date}`, '', '', '', '', '', '']);
+        lastDate = row.date;
+      }
       csvRows.push([row.date, row.name, row.role, row.sign_in, row.sign_out, row.checklist_progress, row.checklist_status]);
+      const nextRow = reportRows[index + 1];
       if (!nextRow || nextRow.date !== row.date) {
         csvRows.push(['', '', '', '', '', '', '']);
       }
-    }
+    });
 
     const csv = csvRows
       .map(e => e.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(','))
