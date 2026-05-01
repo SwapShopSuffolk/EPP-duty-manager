@@ -155,15 +155,18 @@ export default function DutyManagerApp() {
     setNewTaskType(checklistTab);
   }, [checklistTab]);
 
-  const tryChecklistTable = async (tableName, today) => {
-    const { data, error } = await supabase.from(tableName).select('*').eq('date', today);
+  const tryChecklistTable = async (tableName) => {
+    const { data, error } = await supabase.from(tableName)
+      .select('*')
+      .order('date', { ascending: true })
+      .order('id', { ascending: true });
     return { data, error, tableName };
   };
 
-  const fetchChecklistRows = async (today) => {
-    let result = await tryChecklistTable('checklist', today);
+  const fetchChecklistRows = async () => {
+    let result = await tryChecklistTable('checklist');
     if (result.error && /Could not find the table/i.test(result.error.message)) {
-      const fallback = await tryChecklistTable('checklists', today);
+      const fallback = await tryChecklistTable('checklists');
       if (!fallback.error) {
         setChecklistTable('checklists');
         return fallback;
@@ -194,7 +197,7 @@ export default function DutyManagerApp() {
 
     const { data: n, error: nError } = await supabase.from('notes').select('*').order('id', { ascending: false });
     const { data: cd, error: cdError } = await supabase.from('secure_codes').select('*').order('label');
-    const { data: cl, error: clError } = await fetchChecklistRows(today);
+    const { data: cl, error: clError } = await fetchChecklistRows();
     const { data: ct, error: ctError } = await supabase.from('contacts').select('*').order('name');
 
     if (nError) console.error("Notes Fetch Error:", nError.message);
