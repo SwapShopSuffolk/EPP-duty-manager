@@ -70,14 +70,22 @@ const buildChecklistState = (rows) => {
     bar: emptyChecklistRow('bar'),
     fire: emptyChecklistRow('fire')
   };
+  const today = getToday();
   rows?.forEach(row => {
     const type = CHECKLIST_TYPES.includes(row.type) ? row.type : 'daily';
     const items = parseChecklistItems(row.items);
+    
+    // Reset completion state if the date doesn't match today
+    const shouldReset = row.date !== today;
+    const resetItems = shouldReset 
+      ? items.map(item => ({ ...item, done: false }))
+      : items;
+    
     state[type] = {
       id: row.id,
       type,
-      items,
-      completed_count: row.completed_count ?? items.filter(i => i.done).length,
+      items: resetItems,
+      completed_count: shouldReset ? 0 : (row.completed_count ?? items.filter(i => i.done).length),
       total_count: row.total_count ?? items.length,
       date: row.date
     };
