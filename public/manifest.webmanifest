@@ -1,0 +1,21 @@
+{
+  "name": "EPP Duty Manager",
+  "short_name": "EPP",
+  "description": "Daily duty manager for EPP staff.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1e1e1e",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
