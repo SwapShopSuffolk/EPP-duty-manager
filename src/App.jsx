@@ -19,8 +19,9 @@ try {
 // ─────────────────────────────────────────────
 //  CONFIG & HELPERS
 // ─────────────────────────────────────────────
-const ADMIN_USERNAME = import.meta.env.VITE_ADMIN_USERNAME?.trim() || '';
-const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD?.trim() || '';
+const ADMIN_USERNAME = "admin";
+const ADMIN_PASSWORD = "admin123";
+const CODE_PIN = "1234";
 const SESSION_KEY = "dm_session";
 const CHECKLIST_TYPES = ["daily", "bar", "fire"];
 
@@ -154,10 +155,10 @@ export default function DutyManagerApp() {
   const [newTaskType, setNewTaskType] = useState('daily');
   const [contactForm, setContactForm] = useState({ name: '', role: '', number: '' });
   const [codeForm, setCodeForm] = useState({ label: '', code: '' });
+  const [codesUnlocked, setCodesUnlocked] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [showReports, setShowReports] = useState(false);
   const [creds, setCreds] = useState({ user: '', pass: '' });
-  const [insecureConnection, setInsecureConnection] = useState(false);
   const [editChecklist, setEditChecklist] = useState({ type: null, index: null, text: '' });
   const [editContact, setEditContact] = useState({ id: null, name: '', role: '', number: '' });
   const [appError, setAppError] = useState(null);
@@ -210,20 +211,12 @@ export default function DutyManagerApp() {
     }
 
     const { data: n, error: nError } = await supabase.from('notes').select('*').order('id', { ascending: false });
-    let cd = null;
-    let cdError = null;
-    if (isAdmin) {
-      const codesResult = await supabase.from('secure_codes').select('*').order('label');
-      cd = codesResult.data;
-      cdError = codesResult.error;
-      if (cdError) console.error("Codes Fetch Error:", cdError.message);
-    } else {
-      setCodes([]);
-    }
+    const { data: cd, error: cdError } = await supabase.from('secure_codes').select('*').order('label');
     const { data: cl, error: clError } = await fetchChecklistRows();
     const { data: ct, error: ctError } = await supabase.from('contacts').select('*').order('name');
 
     if (nError) console.error("Notes Fetch Error:", nError.message);
+    if (cdError) console.error("Codes Fetch Error:", cdError.message);
     if (clError) {
       console.error("Checklist Fetch Error:", clError.message);
       setFetchWarning("Checklist fetch failed: " + clError.message);
@@ -235,11 +228,7 @@ export default function DutyManagerApp() {
 
     if (p) setSignInHistory(p);
     if (n) setNoteHistory(n);
-    if (cd !== null) {
-      setCodes(cd);
-    } else {
-      setCodes([]);
-    }
+    if (cd) setCodes(cd);
     if (ct) setContacts(ct);
     if (cl) {
       setChecklists(buildChecklistState(cl));
@@ -251,10 +240,6 @@ export default function DutyManagerApp() {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  useEffect(() => {
-    setInsecureConnection(typeof window !== 'undefined' && window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1');
-  }, []);
 
   useEffect(() => {
     if (!supabase) return;
@@ -598,11 +583,6 @@ export default function DutyManagerApp() {
           {isAdmin ? 'Logout' : 'Admin'}
         </button>
       </header>
-      {insecureConnection && (
-        <div className="card" style={{border:'1px solid #f5c6cb', background:'#fff0f0', color:'#721c24'}}>
-          <strong>Security notice:</strong> This app should be served over HTTPS. Browser privacy warnings may appear on insecure connections.
-        </div>
-      )}
       {fetchWarning && (
         <div className="card" style={{border:'1px solid #f5c6cb', background:'#fff0f0', color:'#721c24'}}>
           <strong>Warning:</strong> {fetchWarning}
@@ -846,30 +826,28 @@ export default function DutyManagerApp() {
         {tab === 'codes' && (
           <div className="card">
             <h3>Secure Codes</h3>
-            {isAdmin ? (
-              <>
-                <div style={{marginBottom:'15px', paddingBottom:'15px', borderBottom:'1px dashed var(--border)'}}>
+            {isAdmin && (
+               <div style={{marginBottom:'15px', paddingBottom:'15px', borderBottom:'1px dashed var(--border)'}}>
                   <input className="input" placeholder="Label (e.g. Alarm)" value={codeForm.label} onChange={e=>setCodeForm({...codeForm, label:e.target.value})} />
                   <input className="input" placeholder="Code" value={codeForm.code} onChange={e=>setCodeForm({...codeForm, code:e.target.value})} />
                   <button className="btn btn-primary" onClick={async()=>{
                     if(!codeForm.label) return;
                     await supabase.from('secure_codes').insert([codeForm]); setCodeForm({label:'', code:''}); fetchData();
                   }}>Add Code</button>
-                </div>
-                {codes.length ? codes.map(c => (
-                  <div key={c.id} className="item-row">
-                    <span>{c.label}</span>
-                    <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
-                      <span style={{fontWeight:'bold', color:'var(--red)'}}>{c.code}</span>
-                      <button onClick={()=>deleteItem('secure_codes', c.id)} style={{color:'red', border:'none', background:'none'}}><I.Trash/></button>
-                    </div>
-                  </div>
-                )) : (
-                  <div style={{color:'var(--muted)'}}>No secure codes found.</div>
-                )}
-              </>
+               </div>
+            )}
+            {!codesUnlocked && !isAdmin ? (
+              <input className="input" type="password" placeholder="Enter PIN" onChange={e => e.target.value === CODE_PIN && setCodesUnlocked(true)} />
             ) : (
-              <div style={{color:'var(--muted)'}}>Secure codes are only visible to authenticated admins.</div>
+              codes.map(c => (
+                <div key={c.id} className="item-row">
+                  <span>{c.label}</span>
+                  <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
+                    <span style={{fontWeight:'bold', color:'var(--red)'}}>{c.code}</span>
+                    {isAdmin && <button onClick={()=>deleteItem('secure_codes', c.id)} style={{color:'red', border:'none', background:'none'}}><I.Trash/></button>}
+                  </div>
+                </div>
+              ))
             )}
           </div>
         )}
@@ -894,20 +872,11 @@ export default function DutyManagerApp() {
             <input className="input" placeholder="User" onChange={e=>setCreds({...creds, user:e.target.value})} />
             <input className="input" type="password" placeholder="Pass" onChange={e=>setCreds({...creds, pass:e.target.value})} />
             <button className="btn btn-primary" onClick={() => {
-              if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
-                alert("Admin credentials are not configured.");
-                return;
-              }
-              if(creds.user.trim() === ADMIN_USERNAME && creds.pass === ADMIN_PASSWORD) {
+              if(creds.user === ADMIN_USERNAME && creds.pass === ADMIN_PASSWORD) {
                 const s = {role:'admin'}; sessionStorage.setItem(SESSION_KEY, JSON.stringify(s)); setSession(s); setShowLogin(false);
               } else { alert("Invalid credentials"); }
             }}>Login</button>
             <button className="btn" style={{width:'100%', marginTop:'5px'}} onClick={()=>setShowLogin(false)}>Cancel</button>
-            {(!ADMIN_USERNAME || !ADMIN_PASSWORD) && (
-              <p style={{color:'var(--red)', marginTop:'10px', fontSize:'12px'}}>
-                Admin login is disabled until VITE_ADMIN_USERNAME and VITE_ADMIN_PASSWORD are configured.
-              </p>
-            )}
           </div>
         </div>
       )}
