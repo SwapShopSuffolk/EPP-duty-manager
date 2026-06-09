@@ -242,6 +242,20 @@ export default function DutyManagerApp() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   useEffect(() => {
+    if (!supabase) return;
+
+    const channel = supabase.channel('secure_codes_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'secure_codes' }, () => {
+        fetchData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchData]);
+
+  useEffect(() => {
     const handleError = (event) => {
       setAppError(event.error?.message || event.message || 'Unknown error');
     };
