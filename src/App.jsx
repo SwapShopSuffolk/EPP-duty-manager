@@ -44,6 +44,47 @@ const getDateRangeStart = (days) => {
     String(d.getDate()).padStart(2, "0");
 };
 const fmtTime = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+const formatNoteTimestamp = (value = new Date()) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (match) {
+      const now = new Date();
+      const fallback = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(match[1]), Number(match[2]));
+      if (!Number.isNaN(fallback.getTime())) {
+        return fallback.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      }
+    }
+    return String(value || '');
+  }
+
+  return date.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
+const isNoteExpired = (note) => {
+  if (!note || !note.timestamp) return false;
+
+  const rawValue = String(note.timestamp).trim();
+  const timeMatch = rawValue.match(/^(\d{1,2}):(\d{2})$/);
+  const timestampDate = timeMatch ? new Date() : new Date(rawValue);
+
+  if (timeMatch) {
+    const now = new Date();
+    const parsed = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(timeMatch[1]), Number(timeMatch[2]));
+    return Date.now() - parsed.getTime() >= ONE_WEEK_MS;
+  }
+
+  if (Number.isNaN(timestampDate.getTime())) return false;
+  return Date.now() - timestampDate.getTime() >= ONE_WEEK_MS;
+};
 
 const parseChecklistItems = (raw) => {
   if (!raw) return [];
@@ -226,8 +267,20 @@ export default function DutyManagerApp() {
     }
     if (ctError) console.error("Contacts Fetch Error:", ctError.message);
 
+    if (n) {
+      const activeNotes = n.filter(note => !isNoteExpired(note));
+      const expiredIds = n.filter(note => isNoteExpired(note)).map(note => note.id).filter(Boolean);
+
+      if (expiredIds.length) {
+        const { error: deleteError } = await supabase.from('notes').delete().in('id', expiredIds);
+        if (deleteError) {
+          console.error('Expired notes cleanup failed:', deleteError.message);
+        }
+      }
+
+      setNoteHistory(activeNotes);
+    }
     if (p) setSignInHistory(p);
-    if (n) setNoteHistory(n);
     if (cd) setCodes(cd);
     if (ct) setContacts(ct);
     if (cl) {
@@ -729,7 +782,8 @@ export default function DutyManagerApp() {
               <textarea className="input" placeholder="Notes for next shift..." value={noteText} onChange={e=>setNoteText(e.target.value)} style={{height:'80px'}} />
               <button className="btn btn-primary" onClick={async()=>{
                  if(!noteText.trim())return;
-                 await supabase.from('notes').insert([{text:noteText, author: isAdmin?'Admin':'Staff', timestamp:fmtTime()}]);
+                 const now = new Date();
+                 await supabase.from('notes').insert([{text:noteText.trim(), author: isAdmin?'Admin':'Staff', timestamp: now.toISOString()}]);
                  setNoteText(""); fetchData();
               }}>Post Note</button>
             </div>
@@ -739,7 +793,7 @@ export default function DutyManagerApp() {
                   <p>{n.text}</p>
                   {isAdmin && <button onClick={()=>deleteItem('notes', n.id)} style={{color:'red', border:'none', background:'none'}}><I.Trash/></button>}
                 </div>
-                <div style={{fontSize:'11px', color:'var(--muted)', marginTop:'8px'}}>{n.author} @ {n.timestamp}</div>
+                <div style={{fontSize:'11px', color:'var(--muted)', marginTop:'8px'}}>{n.author} @ {formatNoteTimestamp(n.timestamp)}</div>
               </div>
             ))}
           </div>
